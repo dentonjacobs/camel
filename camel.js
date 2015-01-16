@@ -16,9 +16,9 @@ var version = require('./package.json').version;
 
 var app = express();
 app.use(compress());
-app.use(express.static("public"));
+app.use(express.static("public", { redirect: false }));
 app.use(function (request, response, next) {
-	response.header('X-powered-by', 'Camel (https://github.com/cliss/camel)');
+	response.header('X-powered-by', 'Camel (https://github.com/dentonjacobs/camel)');
     next();
 })
 var server = http.createServer(app);
@@ -28,8 +28,9 @@ var postsRoot = './posts/';
 var templateRoot = './templates/';
 var metadataMarker = '@@';
 var maxCacheSize = 50;
-var postsPerPage = 10;
-var postRegex = /^(.\/)?posts\/\d{4}\/\d{1,2}\/\d{1,2}\/(\w|-)*(.redirect|.md)?$/;
+var postsPerPage = 5;
+var postRegex = /^(.\\)?posts\\\d{4}\\\d{1,2}\\\d{1,2}\\(\w|-)*(.redirect|.md)?$/; // Windows
+//var postRegex = /^(.\/)?posts\/\d{4}\/\d{1,2}\/\d{1,2}\/(\w|-)*(.redirect|.md)?$/; // Not windows
 var utcOffset = 5;
 var cacheResetTimeInMillis = 1800000;
 
@@ -39,6 +40,8 @@ var allPostsSortedGrouped = {};
 var headerSource = undefined;
 var footerSource = null;
 var postHeaderTemplate = null;
+var postFooterTemplate = null;
+var listFooterTemplate = null;
 var siteMetadata = {};
 
 /***************************************************
@@ -54,8 +57,29 @@ function init() {
         loadHeaderFooter('header.html', function (data) {
             headerSource = performMetadataReplacements(siteMetadata, data);
         });
+        
+        loadHeaderFooter('footer.html', function (data) { 
+            footerSource = performMetadataReplacements(siteMetadata, data); 
+        });
     });
-    loadHeaderFooter('footer.html', function (data) { footerSource = data; });
+    loadHeaderFooter('listFooter.html', function (data) {
+        Handlebars.registerHelper('formatPostDate', function (date) {
+            return new Handlebars.SafeString(new Date(date).format('{yyyy}-{mm}-{dd}, {h}:{mm} {TT}'));
+        });
+        Handlebars.registerHelper('formatIsoDate', function (date) {
+            return new Handlebars.SafeString(date !== undefined ? new Date(date).iso() : '');
+        });
+        listFooterTemplate = Handlebars.compile(data);
+    });
+    loadHeaderFooter('postFooter.html', function (data) {
+        Handlebars.registerHelper('formatPostDate', function (date) {
+            return new Handlebars.SafeString(new Date(date).format('{yyyy}-{mm}-{dd}, {h}:{mm} {TT}'));
+        });
+        Handlebars.registerHelper('formatIsoDate', function (date) {
+            return new Handlebars.SafeString(date !== undefined ? new Date(date).iso() : '');
+        });
+        postFooterTemplate = Handlebars.compile(data);
+    });
     loadHeaderFooter('postHeader.html', function (data) {
         Handlebars.registerHelper('formatPostDate', function (date) {
             return new Handlebars.SafeString(new Date(date).format('{Weekday} {d} {Month} {yyyy}, {h}:{mm} {TT}'));
@@ -102,7 +126,7 @@ function normalizedFileName(file) {
 }
 
 function addRenderedPostToCache(file, postData) {
-    //console.log('Adding to cache: ' + normalizedFileName(file));
+    // console.log('Adding to cache: ' + normalizedFileName(file));
     renderedPosts[normalizedFileName(file)] = _.extend({ file: normalizedFileName(file), date: new Date() }, postData);
 
     if (_.size(renderedPosts) > maxCacheSize) {
@@ -110,7 +134,7 @@ function addRenderedPostToCache(file, postData) {
         delete renderedPosts[sorted.first()['file']];
     }
 
-    //console.log('Cache has ' + JSON.stringify(_.keys(renderedPosts)));
+    // console.log('Cache has ' + JSON.stringify(_.keys(renderedPosts)));
 }
 
 function fetchFromCache(file) {
@@ -152,13 +176,14 @@ function performMetadataReplacements(replacements, haystack) {
 }
 
 // Parses the HTML and renders it.
-function parseHtml(lines, replacements, postHeader) {
+function parseHtml(lines, replacements, postHeader, postFooter) {
     // Convert from markdown
     var body = performMetadataReplacements(replacements, marked(lines));
     // Perform replacements
     var header = performMetadataReplacements(replacements, headerSource);
+    var footer = performMetadataReplacements(replacements, footerSource);
     // Concatenate HTML
-    return header + postHeader + body + footerSource;
+    return header + postHeader + body + postFooter + footer;
 }
 
 // Gets all the lines in a post and separates the metadata from the body
@@ -180,13 +205,31 @@ function generateHtmlAndMetadataForFile(file) {
     if (retVal == undefined) {
         var lines = getLinesFromPost(file);
         var metadata = parseMetadata(lines['metadata']);
-        metadata['relativeLink'] = externalFilenameForFile(file);
+
+        if (metadata['Linked'] == 'Yes'){
+            metadata['relativeLink'] =  metadata['Link'];
+            metadata['permalink'] = externalFilenameForFile(file);
+            metadata['linked'] = 'linked';
+
+        } else {
+            metadata['relativeLink'] = externalFilenameForFile(file);
+            metadata['permalink'] = metadata['relativeLink'];
+            metadata['linked'] = 'notLinked';
+        }
+
+        console.log('file: ' +  file + ', title: ' + metadata['title']);
+        if (metadata['title'] != '') {
+            metadata['title'] = metadata['title'] + ' &mdash; ';
+        }
+
         metadata['header'] = postHeaderTemplate(metadata);
+        metadata['footer'] = postFooterTemplate(metadata);
         // If this is a post, assume a body class of 'post'.
+        // console.log('file ' + file + ', regex.test: ' + postRegex.test(file));
         if (postRegex.test(file)) {
             metadata['BodyClass'] = 'post';
         }
-        var html =  parseHtml(lines['body'], metadata, postHeaderTemplate(metadata));
+        var html = parseHtml(lines['body'], metadata, postHeaderTemplate(metadata), postFooterTemplate(metadata));
         addRenderedPostToCache(file, {
             metadata: metadata,
             body: html,
@@ -249,8 +292,10 @@ function allPostsSortedAndGrouped(completion) {
         completion(allPostsSortedGrouped);
     } else {
         qfs.listTree(postsRoot, function (name, stat) {
+            // console.log('list tree name:'  + name + ", regex.test:" + postRegex.test(name));
             return postRegex.test(name);
         }).then(function (files) {
+            // console.log('then files: ' + files);
             // Lump the posts together by day
             var groupedFiles = _.groupBy(files, function (file) {
                 var parts = file.split('/');
@@ -299,10 +344,12 @@ function allPostsSortedAndGrouped(completion) {
 // Forcing to exactly 10 posts per page seemed artificial, and,
 // frankly, harder.
 function allPostsPaginated(completion) {
+    // console.log('allPostsPaginated -> allPostsSortedAndGrouped');
     allPostsSortedAndGrouped(function (postsByDay) {
         var pages = [];
         var thisPageDays = [];
         var count = 0;
+        // console.log('postsByDay: ' + postsByDay);
         postsByDay.each(function (day) {
             count += day['articles'].length;
             thisPageDays.push(day);
@@ -335,9 +382,8 @@ function emptyCache() {
  ***************************************************/
 
 function loadAndSendMarkdownFile(file, response) {
-	if (file.endsWith('.md')) {
+    if (file.endsWith('.md')) {
         // Send the source file as requested.
-        console.log('Sending source file: ' + file);
         fs.exists(file, function (exists) {
             if (exists) {
                 fs.readFile(file, {encoding: 'UTF8'}, function (error, data) {
@@ -363,7 +409,6 @@ function loadAndSendMarkdownFile(file, response) {
         // Is this a post?
         if (fs.existsSync(file + '.md')) {
 			found = true;
-			console.log('Sending file: ' + file)
 			var html = generateHtmlForFile(file);
 			response.status(200).send(html);
 		// Or is this a redirect?
@@ -482,7 +527,8 @@ app.get('/', function (request, response) {
         allPostsPaginated(function (pages) {
             // If we're asking for a page that doesn't exist, redirect.
             if (page < 0 || page > pages.length) {
-                response.redirect(pages.length > 1 ? '/?p=' + pages.length : '/');
+                var destination = pages.length > 1 ? '/?p=' + pages.length : '/';
+                response.redirect(destination);
             }
             var days = pages[page - 1]['days'];
             days.forEach(function (day) {
@@ -518,12 +564,12 @@ app.get('/rss', function (request, response) {
         var feed = new rss({
             title: siteMetadata['SiteTitle'],
             description: 'Posts to ' + siteMetadata['SiteTitle'],
-            feed_url: 'http://www.yoursite.com/rss',
-            site_url: 'http://www.yoursite.com',
-            author: 'Your Name',
-            webMaster: 'Your Name',
-            copyright: '2013-' + new Date().getFullYear() + ' Your Name',
-            image_url: 'http://www.yoursite.com/images/favicon.png',
+            feed_url: 'http://www.dentonjacobs.com/rss',
+            site_url: 'http://www.dentonjacobs.com',
+            author: 'Denton Jacobs',
+            webMaster: 'Denton Jacobs',
+            copyright: '2012-' + new Date().getFullYear() + ' Denton Jacobs',
+            image_url: 'http://www.dentonjacobs.com/images/favicon.png',
             language: 'en',
             //categories: ['Category 1','Category 2','Category 3'],
             pubDate: new Date().toString(),
@@ -646,10 +692,10 @@ app.get('/:year/:month/:day/:slug', function (request, response) {
 });
 
 // Empties the cache.
-// app.get('/tosscache', function (request, response) {
-//     emptyCache();
-//     response.send(205);
-// });
+app.get('/tosscache', function (request, response) {
+    emptyCache();
+    response.sendStatus(205);
+});
 
 app.get('/count', function (request, response) {
 	console.log("/count");

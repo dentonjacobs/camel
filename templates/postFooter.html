@@ -1,0 +1,22 @@
+	{{#if TweetId.length }}
+	<div class="social">
+		<a href="https://twitter.com/dentonjacobs/status/{{TweetId}}">
+			<img src="/images/social/twitter.png" alt="Twitter" />
+			View on Twitter
+		</a>
+	</div>
+	{{/if}}
+	<footer>
+		<div style="float: left;">
+			<a href="{{relativeLink}}">{{Date}}</a>
+		</div>
+		{{#if ShortLink.length }}
+		<div style="display: inline;">
+			<a href="{{ShortUrl}}{{ShortLink}}">{{ShortUrl}}{{ShortLink}}</a>
+		</div>
+		{{/if}}
+		<div style="float: right;">
+			<a href="{{relativeLink}}">Permalink</a>
+		</div>
+	</footer>
+</article>
