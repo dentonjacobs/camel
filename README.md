@@ -10,7 +10,7 @@ More specifically, the design goals were:
 * Basic metadata, stored in each file
 * Basic templating, with a site header/footer and post header stored separately from content
 * Extremely quick performance, by caching rendered HTML output
-* Support RSS
+* Support for a RSS feed
 
 [m]: http://daringfireball.net/projects/markdown
 
@@ -36,18 +36,22 @@ and used from that point forward.
 ## Configuration
 
 * There's a group of "statics" near the top of the file
-* The parameters in the `/rss` route will need to be modified.
-* The headers/footer:
+* The parameters in the `/rss` route will need to be modified
+* The headers/footers:
     * `header.html` - site header; shown at the top of every page
     * `footer.html` - site footer; shown at the bottom of every page
     * `defaultTags.html` - default metadata; merged with page metadata (page wins)
     * `postHeader.html` - post header; shown at the top of every post not marked with `@@ HideHeader=true`. See below.
+    * `rssFooter.html` - RSS footer; intended to only show anything on the bottom of
+       link posts in RSS, but is appended to all RSS entries.
 * It's worth noting there are some [Handlebars][hb] templates in use:
     * `index.md`
-        * `@@ DayTemplate` - used to render a day
-        * `@@ ArticlePartial` – used to render a single article in a day
-        * `@@ FooterTemplate` - used to render pagination
-    * `postHeader.html` - Placed on every post between the site header and post content
+    * `@@ DayTemplate` - used to render a day
+    * `@@ ArticlePartial` – used to render a single article in a day
+    * `@@ FooterTemplate` - used to render pagination
+    * `postHeader.html` - placed on every post between the site header and post content
+    * `rssHeader.html` - placed on the bottom of every RSS item
+* If you'd like to have Camel post to Twitter, you need to set four environment variables (see below)
 
 [hb]: http://handlebarsjs.com/
 
@@ -56,42 +60,44 @@ and used from that point forward.
 To use Camel, the following files are required:
 
     Root
-      +-- camel.js
-      |   Application entry point
-      +-- package.json
-      |   Node package file
-      +-- templates/
-      |     +-- defaultTags.html
-      |     |   Site-level default tags, such as the site title
-      |     +-- header.html
-      |     |   Site header (top of every page)
-      |     +-- footer.html
-      |     |   Site footer (bottom of every page)
-      |     `-- postHeader.html
-      |         Post header (top of every post, after the site header. Handlebars template.)
-      +-- public/
-      |     `-- Any static files, such as images/css/javascript/etc.
-      `-- posts/
-          All the pages & posts are here. Pages in the root, posts ordered by day. For example:
-            +-- index.md
-            |   Root file; note that DayTemplate, ArticlePartial, and FooterTemplate are
-            |   all Handlebars templates
-            +-- about.md
-            |   Sample about page
-            +-- 2014/
-            |   Year
-            |     +-- 4/
-            |     |   Month
-            |     |   +-- 29/
-            |     |   |   Day
-            |     |   |    `-- some-blog-post.md
-            |     |   `-- 30/
-            |     |        +-- some-other-post.md
-            |     |        `-- yet-another-post.md
-            |     `-- 5/
-            |         `-- 1/
-            |             `-- newest-blog-post.md
-            `-- etc.
+    +-- camel.js
+    |   Application entry point
+    +-- package.json
+    |   Node package file
+    +-- templates/
+    |     +-- defaultTags.html
+    |     |   Site-level default tags, such as the site title
+    |     +-- header.html
+    |     |   Site header (top of every page)
+    |     +-- footer.html
+    |     |   Site footer (bottom of every page)
+    |     +-- postHeader.html
+    |     |   Post header (top of every post, after the site header. Handlebars template.)
+    |     `-- rssFooter.html
+    |         RSS footer (at the end of every RSS item)
+    +-- public/
+    |     `-- Any static files, such as images/css/javascript/etc.
+    `-- posts/
+        All the pages & posts are here. Pages in the root, posts ordered by day. For example:
+        +-- index.md
+        |   Root file; note that DayTemplate, ArticlePartial, and FooterTemplate are
+        |   all Handlebars templates
+        +-- about.md
+        |   Sample about page
+        +-- 2014/
+        |   Year
+        |     +-- 4/
+        |     |   Month
+        |     |   +-- 29/
+        |     |   |   Day
+        |     |   |    `-- some-blog-post.md
+        |     |   `-- 30/
+        |     |        +-- some-other-post.md
+        |     |        `-- yet-another-post.md
+        |     `-- 5/
+        |         `-- 1/
+        |             `-- newest-blog-post.md
+        `-- etc.
 
 For each post, metadata is specified at the top, and can be leveraged in the body. For example:
 
@@ -101,6 +107,25 @@ For each post, metadata is specified at the top, and can be leveraged in the bod
     This is a *test post* entitled "@@Title@@".
 
 The title and date are required. Any other metadata is optional.
+
+### Link Posts
+As of version 1.3, link posts are supported. To create a link post, simply add a `Link`
+metadata item:
+
+    @@ Title=Sample Link Post
+    @@ Date=2015-02-06 12:00
+    @@ Link=http://www.vt.edu/
+
+    This is a sample *link* post.
+
+The presence of a `Link` metadata item indicates this is a link post. The formatting for
+link and non-link post headers is controlled by the `postHeader.html` template.
+
+In the RSS feed, the link for a link post is the *external* link. Thus, `rssFooter.html`
+is used to add a permalink to the Camel site at the bottom of each link post. It is
+important to note that this footer is shown on *every* post; it is up to the footer to
+decide whether or not to show anything for the post in question. The example included in
+this repo behaves as intended.
 
 ### Redirects
 
@@ -119,6 +144,29 @@ code will result in that status code being used blindly, so tread carefully.
 
 [301]: http://en.wikipedia.org/wiki/HTTP_301
 [302]: http://en.wikipedia.org/wiki/HTTP_302
+
+### Automatic tweets
+
+As of version 1.4, Camel can automatically tweet when a new post is discovered. This
+requires a custom app to be set up for your blog; you can set this up [at Twitter][tdev].
+To enable, specify four environment variables to correspond to those Twitter issues:
+
+* `TWITTER_CONSUMER_KEY`
+* `TWITTER_CONSUMER_SECRET`
+* `TWITTER_ACCESS_TOKEN`
+* `TWITTER_TOKEN_SECRET`
+
+Additionally, a couple of variables up at the top of the file need to be set:
+
+* `twitterUsername` - the username of the Twitter account that will be tweeted from.
+* `twitterClientNeedle` - a portion of the client's name
+
+Upon startup, and when the caches are cleaned, Camel will look at the most recent tweets
+by the account in question by the app with a name that contains `twitterClientNeedle`. It
+will look to see the most recent URL tweeted. If the URL does not match the most recent
+post's URL, then a tweet is fired off.
+
+[tdev]: https://apps.twitter.com
 
 # Quirks
 
@@ -161,14 +209,19 @@ Pagination is only necessary on the homepage, and page numbers are 1-based. Page
 
 # Status
 
-Camel is functional, and is presently running [www.caseyliss.com][c]. It could probably stand
-to be cleaned up a little bit, but it is considered feature complete.
+Camel is functional, and is presently running [www.caseyliss.com][c]. There are lots of
+features that probably *could* be added, but none that I'm actively planning.
 
 [c]: http://www.caseyliss.com/
+
+Please update this file & issue a pull request if you'd like your site featured here.
 
 # License
 
 Camel is MIT-Licensed.
+
+I'd appreciate it you provided a link back to either this repository, or [my website][c],
+on any sites that run Camel.
 
 Should you happen to use Camel, I'd love to know. Please [contact me][co].
 
@@ -176,9 +229,16 @@ Should you happen to use Camel, I'd love to know. Please [contact me][co].
 
 # Change Log
 
+* __1.4.0__ Added support for auto-tweeting.
+* __1.3.1__ Updated RSS feed such that link posts open the external link, and have a
+  "Permalink" to the site is shown at the bottom of the post.
+* __1.3.0__ Added link posts.
+* __1.2.1__ Significant cleanup/restructuring. Now less embarrassing! Removal of lots of
+similar-sounding functions and more liberal use of data that we've already collected in
+`allPostsSortedAndGrouped()`.
 * __1.2.0__ Changes from [marked](https://github.com/chjj/marked) to
-  [markdown-it](https://github.com/markdown-it/markdown-it), adds support for footnotes.
+[markdown-it](https://github.com/markdown-it/markdown-it), adds support for footnotes.
 * __1.1.0__ Fix post regex issue, adds support for redirects, adds `/count` route,
-  prevents year responses for unreasonable years
+prevents year responses for unreasonable years
 * __1.0.1__ Adds x-powered-by header, upgrades to packages
 * __1.0.0__ Initial release

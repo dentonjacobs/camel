@@ -84,11 +84,11 @@
 			}
 		},
 		{
-			"file": "posts/2014/07/27/01.md",
+			"file": "templates/defaultTags.html",
 			"settings":
 			{
-				"buffer_size": 343,
-				"line_ending": "Unix"
+				"buffer_size": 68,
+				"line_ending": "Windows"
 			}
 		},
 		{
@@ -253,6 +253,7 @@
 		"case_sensitive": false,
 		"find_history":
 		[
+			"startsWith",
 			"console",
 			"marked",
 			"hr",
@@ -346,8 +347,8 @@
 						"selection":
 						[
 							[
-								1604,
-								1604
+								1633,
+								1633
 							]
 						],
 						"settings":
@@ -357,7 +358,7 @@
 							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
-						"translation.y": 549.0,
+						"translation.y": 0.0,
 						"zoom_level": 1.0
 					},
 					"stack_index": 0,
@@ -365,24 +366,24 @@
 				},
 				{
 					"buffer": 2,
-					"file": "posts/2014/07/27/01.md",
+					"file": "templates/defaultTags.html",
 					"semi_transient": true,
 					"settings":
 					{
-						"buffer_size": 343,
+						"buffer_size": 68,
 						"regions":
 						{
 						},
 						"selection":
 						[
 							[
-								0,
-								0
+								68,
+								68
 							]
 						],
 						"settings":
 						{
-							"syntax": "Packages/MarkdownEditing/Markdown.tmLanguage"
+							"syntax": "Packages/HTML/HTML.tmLanguage"
 						},
 						"translation.x": 0.0,
 						"translation.y": 0.0,
