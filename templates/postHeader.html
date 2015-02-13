@@ -1,13 +1,8 @@
-<<<<<<< HEAD
 <article>
 	<header>
-		<a class="postTitle {{linked}}" href="{{relativeLink}}">{{Title}}</a>
+	{{#if Link}}
+	    <a class="postTitle linked" href="{{Link}}">{{Title}}</a><br />
+	{{else}}
+	    <a class="postTitle" href="{{relativeLink}}">{{Title}}</a>
+	{{/if}}
 	</header>
-=======
-{{#if Link}}
-    <a class="postTitle" href="{{Link}}">{{Title}}</a><br />
-    <a href="{{relativeLink}}">Permalink</a>
-{{else}}
-    <a class="postTitle" href="{{relativeLink}}">{{Title}}</a>
-{{/if}}
->>>>>>> upstream/master

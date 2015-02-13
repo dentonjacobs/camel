@@ -86,9 +86,10 @@ function init() {
             return new Handlebars.SafeString(date !== undefined ? new Date(date).iso() : '');
         });
         postFooterTemplate = Handlebars.compile(data);
-    });	loadHeaderFooter('postHeader.html', function (data) {
+    });	
+    loadHeaderFooter('postHeader.html', function (data) {
 		Handlebars.registerHelper('formatPostDate', function (date) {
-            return new Handlebars.SafeString(new Date(date).format('{Weekday} {d} {Month} {yyyy}, {h}:{mm} {TT}'));
+            return new Handlebars.SafeString(new Date(date).format('{yyyy}-{mm}-{dd}, {h}:{mm} {TT}'));
 		});
 		Handlebars.registerHelper('formatIsoDate', function (date) {
 			return new Handlebars.SafeString(date !== undefined ? new Date(date).iso() : '');
