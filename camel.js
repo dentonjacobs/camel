@@ -57,6 +57,7 @@ var headerSource;
 var footerSource = null;
 var postHeaderTemplate = null;
 var postFooterTemplate = null;
+var postInResponseToTemplate = null;
 var rssFooterTemplate = null;
 var siteMetadata = {};
 
@@ -167,26 +168,20 @@ function generateHtmlAndMetadataForFile(file) {
         	console.log("Metadata Item: " + data);
         });
 
-        var inResponseTo = '';
-        console.log('Metadata InResponseToUrl: ' + metadata['InResponseToUrl']);
-        if (metadata['InResponseToUrl'] !== 'undefined') {
-        	var domain = metadata['InResponseToUrl'].replace('http://', '');
-        	domain = domain.slice(0, (domain.indexOf('/')-1));
-        	inResponseTo = '<div>In response to a post on <a href="' + metadata['InResponseToUrl'] + '">' + domain + '</a>:</div>';
-        }
-
 		addRenderedPostToCache(file, {
 			metadata: metadata,
 			header: performMetadataReplacements(metadata, headerSource),
 			postHeader:  performMetadataReplacements(metadata, postHeaderTemplate(metadata)),
+			inResponseTo: performMetadataReplacements(metadata, postInResponseToTemplate(metadata)),
 			postFooter: performMetadataReplacements(metadata, postFooterTemplate(metadata)),
 			rssFooter: performMetadataReplacements(metadata, rssFooterTemplate(metadata)),
 			unwrappedBody: performMetadataReplacements(metadata, markdownit.render(lines.body)),
 			html: function () {
 				return this.header +
 					this.postHeader +
-					inResponseTo + 
+					this.inResponseTo + 
 					this.unwrappedBody +
+					this.postFooter + 
 					footerSource;
 			}
 		});
@@ -361,7 +356,10 @@ function init() {
             return new Handlebars.SafeString(date !== undefined ? new Date(date).iso() : '');
         });
         postFooterTemplate = Handlebars.compile(data);
-    });	
+    });
+    loadHeaderFooter('inResponse.html', function (data) {
+    	postInResponseToTemplate = Handlebars.compile(data);
+    })
 	loadHeaderFooter('postHeader.html', function (data) {
 		Handlebars.registerHelper('formatPostDate', function (date) {
 			return new Handlebars.SafeString(new Date(date).format('{yyyy}-{mm}-{dd}, {h}:{mm} {TT}'));
@@ -767,10 +765,10 @@ app.get('/:year/:month/:day/:slug', function (request, response) {
 });
 
 // Empties the cache.
-// app.get('/tosscache', function (request, response) {
-//     emptyCache();
-//     response.send(205);
-// });
+app.get('/tosscache', function (request, response) {
+    emptyCache();
+    response.send(205);
+});
 
 app.get('/count', function (request, response) {
 	console.log("/count");
