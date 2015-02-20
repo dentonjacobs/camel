@@ -14,11 +14,11 @@ var markdownit = require('markdown-it')({
 	xhtmlOut: true,
 	typographer: true
 }).use(require('markdown-it-footnote'));
-var rss = require('rss');
+var Rss = require('rss');
 var Handlebars = require('handlebars');
 var version = require('./package.json').version;
-var twitter = require('twitter');
-var twitterClient = new twitter({
+var Twitter = require('twitter');
+var twitterClient = new Twitter({
 	consumer_key: process.env.TWITTER_CONSUMER_KEY,
 	consumer_secret: process.env.TWITTER_CONSUMER_SECRET,
 	access_token_key: process.env.TWITTER_ACCESS_TOKEN,
@@ -27,11 +27,11 @@ var twitterClient = new twitter({
 
 var app = express();
 app.use(compress());
-app.use(express.static("public", { redirect: false }));
+app.use(express.static("public"));
 app.use(function (request, response, next) {
 	response.header('X-powered-by', 'Camel (https://github.com/dentonjacobs/camel)');
-    next();
-})
+	next();
+});
 var server = http.createServer(app);
 
 // "Statics"
@@ -39,125 +39,30 @@ var postsRoot = './posts/';
 var templateRoot = './templates/';
 var metadataMarker = '@@';
 var maxCacheSize = 50;
-var postsPerPage = 5;
+var postsPerPage = 10;
 var postRegex = /^(.\\)?posts\\\d{4}\\\d{1,2}\\\d{1,2}\\(\w|-)*(.redirect|.md)?$/; // Windows
 //var postRegex = /^(.\/)?posts\/\d{4}\/\d{1,2}\/\d{1,2}\/(\w|-)*(.redirect|.md)?$/; // Not windows
 var footnoteAnchorRegex = /[#"]fn\d+/g;
 var footnoteIdRegex = /fnref\d+/g;
 var utcOffset = 5;
 var cacheResetTimeInMillis = 1800000;
-var twitterUsername = 'yourusername';
-var twitterClientNeedle = 'your_app_needle';
+var twitterUsername = 'dentonjacobs';
+var twitterClientNeedle = 'Camel Spitter';
 
 var renderedPosts = {};
 var renderedRss = {};
+var renderedAlternateRss = {};
 var allPostsSortedGrouped = {};
-var headerSource = undefined;
+var headerSource;
 var footerSource = null;
 var postHeaderTemplate = null;
 var postFooterTemplate = null;
-var listFooterTemplate = null;
 var rssFooterTemplate = null;
 var siteMetadata = {};
 
 /***************************************************
 * HELPER METHODS                                  *
 ***************************************************/
-
-function init() {
-	loadHeaderFooter('defaultTags.html', function (data) {
-		// Note this comes in as a flat string; split on newlines for parsing metadata.
-		siteMetadata = parseMetadata(data.split('\n'));
-
-		// This relies on the above, so nest it.
-		loadHeaderFooter('header.html', function (data) {
-			headerSource = performMetadataReplacements(siteMetadata, data);
-		});
-	});
-	loadHeaderFooter('footer.html', function (data) { footerSource = data; });
-	loadHeaderFooter('rssFooter.html', function (data) {
-		rssFooterTemplate = Handlebars.compile(data);
-	});
-    loadHeaderFooter('postFooter.html', function (data) {
-        Handlebars.registerHelper('formatPostDate', function (date) {
-            return new Handlebars.SafeString(new Date(date).format('{yyyy}-{mm}-{dd}, {h}:{mm} {TT}'));
-        });
-        Handlebars.registerHelper('formatIsoDate', function (date) {
-            return new Handlebars.SafeString(date !== undefined ? new Date(date).iso() : '');
-        });
-        postFooterTemplate = Handlebars.compile(data);
-    });	
-    loadHeaderFooter('postHeader.html', function (data) {
-		Handlebars.registerHelper('formatPostDate', function (date) {
-            return new Handlebars.SafeString(new Date(date).format('{yyyy}-{mm}-{dd}, {h}:{mm} {TT}'));
-		});
-		Handlebars.registerHelper('formatIsoDate', function (date) {
-			return new Handlebars.SafeString(date !== undefined ? new Date(date).iso() : '');
-		});
-		postHeaderTemplate = Handlebars.compile(data);
-	});
-
-	// Kill the cache every 30 minutes.
-	setInterval(emptyCache, cacheResetTimeInMillis);
-
-	//tweetLatestPost();
-}
-
-function tweetLatestPost() {
-	if (twitterClient != null && process.env.TWITTER_CONSUMER_KEY != null) {
-		twitterClient.get('statuses/user_timeline', {screen_name: twitterUsername}, function(error, tweets, response){
-			if (error) {
-				console.log(JSON.stringify(error, undefined, 2));
-				return;
-			}
-
-			var lastUrl = null;
-			var i = 0;
-			while (lastUrl == null && i < tweets.length) {
-				if (tweets[i].source.has(twitterClientNeedle) &&
-					tweets[i]['entities'] &&
-					tweets[i]['entities']['urls']) {
-					lastUrl = tweets[i].entities.urls[0].expanded_url;
-				} else {
-					i++;
-				}
-			}
-
-			allPostsSortedAndGrouped(function (postsByDay) {
-				var latestPost = postsByDay[0].articles[0];
-				var link = latestPost.metadata.SiteRoot + latestPost.metadata.relativeLink;
-
-				if (lastUrl != link) {
-					console.log('Tweeting new link: ' + link);
-
-					var params = {
-						status: latestPost.metadata.Title + '\n\n' + link
-					};
-					twitterClient.post('statuses/update', params, function (error, tweet, response) {
-							if (error) {
-								console.log(JSON.stringify(error, undefined, 2));
-								throw error;
-							}
-					});
-				} else {
-					console.log('Twitter is up to date.');
-				}
-			});
-		});
-	}
-}
-
-function loadHeaderFooter(file, completion) {
-	fs.exists(templateRoot + file, function(exists) {
-		if (exists) {
-			fs.readFile(templateRoot + file, {encoding: 'UTF8'}, function (error, data) {
-				if (!error) {
-					completion(data);
-				}
-			});
-		}
-	});
-}
 
 function normalizedFileName(file) {
 	var retVal = file;
@@ -170,20 +75,33 @@ function normalizedFileName(file) {
 	return retVal;
 }
 
+function fetchFromCache(file) {
+	return renderedPosts[normalizedFileName(file)] || null;
+}
+
 function addRenderedPostToCache(file, postData) {
 	//console.log('Adding to cache: ' + normalizedFileName(file));
 	renderedPosts[normalizedFileName(file)] = _.extend({ file: normalizedFileName(file), date: new Date() }, postData);
 
 	if (_.size(renderedPosts) > maxCacheSize) {
-		var sorted = _.sortBy(renderedPosts, function (post) { return post['date']; });
-		delete renderedPosts[sorted.first()['file']];
+		var sorted = _.sortBy(renderedPosts, function (post) { return post.date; });
+		delete renderedPosts[sorted.first().file];
 	}
 
 	//console.log('Cache has ' + JSON.stringify(_.keys(renderedPosts)));
 }
 
-function fetchFromCache(file) {
-	return renderedPosts[normalizedFileName(file)] || null;
+// Gets all the lines in a post and separates the metadata from the body
+function getLinesFromPost(file) {
+	file = file.endsWith('.md') ? file : file + '.md';
+	var data = fs.readFileSync(file, {encoding: 'UTF8'});
+
+	// Extract the pieces
+	var lines = data.lines();
+	var metadataLines = _.filter(lines, function (line) { return line.startsWith(metadataMarker); });
+	var body = _.difference(lines, metadataLines).join('\n');
+
+	return {metadata: metadataLines, body: body};
 }
 
 // Parses the metadata in the file
@@ -211,15 +129,23 @@ function parseMetadata(lines) {
 	return retVal;
 }
 
-// Parses the HTML and renders it.
-function parseHtml(lines, replacements, postHeader, postFooter) {
-    // Convert from markdown
-    var body = performMetadataReplacements(replacements, markdownit.render(lines));
-    // Perform replacements
-    var header = performMetadataReplacements(replacements, headerSource);
-    var footer = performMetadataReplacements(replacements, footerSource);
-    // Concatenate HTML
-    return header + postHeader + body + postFooter + footer;
+// Gets the external link for this file. Relative if request is
+// not specified. Absolute if request is specified.
+function externalFilenameForFile(file, request) {
+	console.log('file: ' + file);
+	console.log('postsRoot: ' + postsRoot);
+	console.log('postsRootReplaced: ' + postsRoot.replace('./', '').replace('/', ''));
+	var hostname = typeof(request) !== 'undefined' ? request.headers.host : '';
+
+	var retVal = hostname.length ? ('http://' + hostname) : '';
+	console.log("retVal: " + retVal);
+	//retVal += file.at(0) === '/' && hostname.length > 0 ? '' : '/';
+	//retVal += file.at(0) === '\\' && hostname.length > 0 ? '' : '\\';
+	//console.log("retVal: " + retVal);
+	//retVal += file.replace('.md', '').replace(postsRoot, '').replace(postsRoot.replace('./', ''), '');
+	retVal += file.replace('.md', '').replace(postsRoot, '').replace(postsRoot.replace('./', '').replace('/', ''), '');
+	console.log("retVal: " + retVal);
+	return retVal;
 }
 
 function performMetadataReplacements(replacements, haystack) {
@@ -231,67 +157,51 @@ function performMetadataReplacements(replacements, haystack) {
 	return haystack;
 }
 
-// Gets all the lines in a post and separates the metadata from the body
-function getLinesFromPost(file) {
-	file = file.endsWith('.md') ? file : file + '.md';
-	var data = fs.readFileSync(file, {encoding: 'UTF8'});
-
-	// Extract the pieces
-	var lines = data.lines();
-	var metadataLines = _.filter(lines, function (line) { return line.startsWith(metadataMarker); });
-	var body = _.difference(lines, metadataLines).join('\n');
-
-	return {metadata: metadataLines, body: body};
-}
-
 // Gets the metadata & rendered HTML for this file
 function generateHtmlAndMetadataForFile(file) {
-
 	var retVal = fetchFromCache(file);
-	if (retVal == undefined) {
+	if (typeof(retVal) !== 'undefined') {
 		var lines = getLinesFromPost(file);
-		var metadata = parseMetadata(lines['metadata']);
-		metadata['relativeLink'] = externalFilenameForFile(file);
+		var metadata = parseMetadata(lines.metadata);
+		metadata.RelativeLink = externalFilenameForFile(file);
 		// If this is a post, assume a body class of 'post'.
 		if (postRegex.test(file)) {
-			metadata['BodyClass'] = 'post';
+			metadata.BodyClass = 'post';
 		}
+
+        _.each(Object.keys(metadata), function(key) {
+        	console.log("Metadata Key: " + key);
+        });
+        _.each(metadata, function(data) {
+        	console.log("Metadata Item: " + data);
+        });
+
+        var inResponseTo = '';
+        console.log('Metadata InResponseToUrl: ' + metadata['InResponseToUrl']);
+        if (metadata['InResponseToUrl'] !== 'undefined') {
+        	var domain = metadata['InResponseToUrl'].replace('http://', '');
+        	domain = domain.slice(0, (domain.indexOf('/')-1));
+        	inResponseTo = '<div>In response to a post on <a href="' + metadata['InResponseToUrl'] + '">' + domain + '</a>:</div>';
+        }
 
 		addRenderedPostToCache(file, {
 			metadata: metadata,
 			header: performMetadataReplacements(metadata, headerSource),
 			postHeader:  performMetadataReplacements(metadata, postHeaderTemplate(metadata)),
-            postFooter: performMetadataReplacements(metadata, postFooterTemplate(metadata)),
+			postFooter: performMetadataReplacements(metadata, postFooterTemplate(metadata)),
 			rssFooter: performMetadataReplacements(metadata, rssFooterTemplate(metadata)),
-			unwrappedBody: performMetadataReplacements(metadata, markdownit.render(lines['body'])),
+			unwrappedBody: performMetadataReplacements(metadata, markdownit.render(lines.body)),
 			html: function () {
 				return this.header +
 					this.postHeader +
+					inResponseTo + 
 					this.unwrappedBody +
-                    this.postFooter + 
 					footerSource;
 			}
 		});
 	}
 
 	return fetchFromCache(file);
-}
-
-// Gets the rendered HTML for this file, with header/footer.
-function generateHtmlForFile(file) {
-	var fileData = generateHtmlAndMetadataForFile(file);
-	return fileData.html();
-}
-
-// Gets the external link for this file. Relative if request is
-// not specified. Absolute if request is specified.
-function externalFilenameForFile(file, request) {
-	var hostname = request != undefined ? request.headers.host : '';
-
-	var retVal = hostname.length ? ('http://' + hostname) : '';
-	retVal += file.at(0) == '/' && hostname.length > 0 ? '' : '/';
-	retVal += file.replace('.md', '').replace(postsRoot, '').replace(postsRoot.replace('./', ''), '');
-	return retVal;
 }
 
 // Gets all the posts, grouped by day and sorted descending.
@@ -312,7 +222,7 @@ function externalFilenameForFile(file, request) {
 //                +-- ...
 //                `-- (Article Object)
 function allPostsSortedAndGrouped(completion) {
-	if (Object.size(allPostsSortedGrouped) != 0) {
+	if (Object.size(allPostsSortedGrouped) !== 0) {
 		completion(allPostsSortedGrouped);
 	} else {
 		qfs.listTree(postsRoot, function (name, stat) {
@@ -345,18 +255,131 @@ function allPostsSortedAndGrouped(completion) {
 				// ...so we can sort the posts...
 				articles = _.sortBy(articles, function (article) {
 					// ...by their post date and TIME.
-					return Date.create(article['metadata']['Date']);
+					return Date.create(article.metadata.Date);
 				}).reverse();
 				// Array of objects; each object's key is the date, value
 				// is an array of objects
 				// In that array of objects, there is a body & metadata.
-				retVal.push({date: key, articles: articles});
+				// Note if this day only had a redirect, it may have no articles.
+				if (articles.length > 0) {
+					retVal.push({date: key, articles: articles});
+				}
 			});
 
 			allPostsSortedGrouped = retVal;
 			completion(retVal);
 		});
 	}
+}
+
+function tweetLatestPost() {
+	if (twitterClient !== null && typeof(process.env.TWITTER_CONSUMER_KEY) !== 'undefined') {
+		twitterClient.get('statuses/user_timeline', {screen_name: twitterUsername}, function (error, tweets) {
+			if (error) {
+				console.log(JSON.stringify(error, undefined, 2));
+				return;
+			}
+
+			var lastUrl = null, i = 0;
+			while (lastUrl === null && i < tweets.length) {
+				if (tweets[i].source.has(twitterClientNeedle) &&
+					tweets[i].entities &&
+					tweets[i].entities.urls) {
+					lastUrl = tweets[i].entities.urls[0].expanded_url;
+				} else {
+					i += 1;
+				}
+			}
+
+			allPostsSortedAndGrouped(function (postsByDay) {
+				var latestPost = postsByDay[0].articles[0];
+				var link = latestPost.metadata.SiteRoot + latestPost.metadata.RelativeLink;
+
+				if (lastUrl !== link) {
+					console.log('Tweeting new link: ' + link);
+
+					var params = {
+						status: latestPost.metadata.Title + '\n\n' + link
+					};
+					twitterClient.post('statuses/update', params, function (error, tweet, response) {
+							if (error) {
+								console.log(JSON.stringify(error, undefined, 2));
+								throw error;
+							}
+					});
+				} else {
+					console.log('Twitter is up to date.');
+				}
+			});
+		});
+	}
+}
+
+function loadHeaderFooter(file, completion) {
+	fs.exists(templateRoot + file, function(exists) {
+		if (exists) {
+			fs.readFile(templateRoot + file, {encoding: 'UTF8'}, function (error, data) {
+				if (!error) {
+					completion(data);
+				}
+			});
+		}
+	});
+}
+
+// Empties the caches.
+function emptyCache() {
+	console.log('Emptying the cache.');
+	renderedPosts = {};
+	renderedRss = {};
+	allPostsSortedGrouped = {};
+
+	tweetLatestPost();
+}
+
+function init() {
+	loadHeaderFooter('defaultTags.html', function (data) {
+		// Note this comes in as a flat string; split on newlines for parsing metadata.
+		siteMetadata = parseMetadata(data.split('\n'));
+
+		// This relies on the above, so nest it.
+		loadHeaderFooter('header.html', function (data) {
+			headerSource = performMetadataReplacements(siteMetadata, data);
+		});
+	});
+	loadHeaderFooter('footer.html', function (data) { footerSource = data; });
+	loadHeaderFooter('rssFooter.html', function (data) {
+		rssFooterTemplate = Handlebars.compile(data);
+	});
+    loadHeaderFooter('postFooter.html', function (data) {
+        Handlebars.registerHelper('formatPostDate', function (date) {
+            return new Handlebars.SafeString(new Date(date).format('{yyyy}-{mm}-{dd}, {h}:{mm} {TT}'));
+        });
+        Handlebars.registerHelper('formatIsoDate', function (date) {
+            return new Handlebars.SafeString(date !== undefined ? new Date(date).iso() : '');
+        });
+        postFooterTemplate = Handlebars.compile(data);
+    });	
+	loadHeaderFooter('postHeader.html', function (data) {
+		Handlebars.registerHelper('formatPostDate', function (date) {
+			return new Handlebars.SafeString(new Date(date).format('{yyyy}-{mm}-{dd}, {h}:{mm} {TT}'));
+		});
+		Handlebars.registerHelper('formatIsoDate', function (date) {
+			return new Handlebars.SafeString(typeof(date) !== 'undefined' ? new Date(date).iso() : '');
+		});
+		postHeaderTemplate = Handlebars.compile(data);
+	});
+
+	// Kill the cache every 30 minutes.
+	setInterval(emptyCache, cacheResetTimeInMillis);
+
+	//tweetLatestPost();
+}
+
+// Gets the rendered HTML for this file, with header/footer.
+function generateHtmlForFile(file) {
+	var fileData = generateHtmlAndMetadataForFile(file);
+	return fileData.html();
 }
 
 // Gets all the posts, paginated.
@@ -371,7 +394,7 @@ function allPostsPaginated(completion) {
 		var thisPageDays = [];
 		var count = 0;
 		postsByDay.each(function (day) {
-			count += day['articles'].length;
+			count += day.articles.length;
 			thisPageDays.push(day);
 			// Reset count if need be
 			if (count >= postsPerPage) {
@@ -389,19 +412,14 @@ function allPostsPaginated(completion) {
 	});
 }
 
-// Empties the caches.
-function emptyCache() {
-	console.log('Emptying the cache.');
-	renderedPosts = {};
-	renderedRss = {};
-	allPostsSortedGrouped = {};
-
-	tweetLatestPost();
-}
-
 /***************************************************
 * ROUTE HELPERS                                   *
 ***************************************************/
+
+function send404(response, file) {
+	console.log('404: ' + file);
+	response.status(404).send(generateHtmlForFile('posts/404.md'));
+}
 
 function loadAndSendMarkdownFile(file, response) {
 	if (file.endsWith('.md')) {
@@ -422,16 +440,16 @@ function loadAndSendMarkdownFile(file, response) {
 				response.status(400).send({error: 'Markdown file not found.'});
 			}
 		});
-	} else if (fetchFromCache(file) != null) {
+	} else if (fetchFromCache(file) !== null) {
 		// Send the cached version.
 		console.log('Sending cached file: ' + file);
 		response.status(200).send(fetchFromCache(file).html());
-		return;
 	} else {
 		var found = false;
 		// Is this a post?
 		if (fs.existsSync(file + '.md')) {
 			found = true;
+			console.log('Sending file: ' + file);
 			var html = generateHtmlForFile(file);
 			response.status(200).send(html);
 		// Or is this a redirect?
@@ -442,7 +460,7 @@ function loadAndSendMarkdownFile(file, response) {
 				if (parts.length >= 2) {
 					found = true;
 					console.log('Redirecting to: ' + parts[1]);
-					response.redirect(parseInt(parts[0]), parts[1]);
+					response.redirect(parseInt(parts[0], 10), parts[1]);
 				}
 			}
 		}
@@ -463,7 +481,7 @@ function sendYearListing(request, response) {
 
 	allPostsSortedAndGrouped(function (postsByDay) {
 		postsByDay.each(function (day) {
-			var thisDay = Date.create(day['date']);
+			var thisDay = Date.create(day.date);
 			if (thisDay.is(year)) {
 				// Date.isBetween() is not inclusive, so back the from date up one
 				var thisMonth = new Date(Number(year), Number(currentMonth)).addDays(-1);
@@ -471,10 +489,10 @@ function sendYearListing(request, response) {
 				var nextMonth = Date.create(thisMonth).addMonths(1).addDays(2);
 
 				//console.log(thisMonth.short() + ' <-- ' + thisDay.short() + ' --> ' + nextMonth.short() + '?   ' + (thisDay.isBetween(thisMonth, nextMonth) ? 'YES' : 'NO'));
-				if (currentMonth == null || !thisDay.isBetween(thisMonth, nextMonth)) {
+				if (currentMonth === null || !thisDay.isBetween(thisMonth, nextMonth)) {
 					// If we've started a month list, end it, because we're on a new month now.
 					if (currentMonth >= 0) {
-						retVal += '</ul>'
+						retVal += '</ul>';
 					}
 
 					anyFound = true;
@@ -482,8 +500,8 @@ function sendYearListing(request, response) {
 					retVal += '<h2><a href="/' + year + '/' + (currentMonth + 1) + '/">' + thisDay.format('{Month}') + '</a></h2>\n<ul>';
 				}
 
-				day['articles'].each(function (article) {
-					retVal += '<li><a href="' + externalFilenameForFile(article['file']) + '">' + article['metadata']['Title'] + '</a></li>';
+				day.articles.each(function (article) {
+					retVal += '<li><a href="' + externalFilenameForFile(article.file) + '">' + article.metadata.Title + '</a></li>';
 				});
 			}
 		});
@@ -504,7 +522,7 @@ function sendYearListing(request, response) {
 // generator: function to generate the raw HTML. Only parameter is a function that takes a completion handler that takes the raw HTML as its parameter.
 // baseRouteHandler() --> generator() to build HTML --> completion() to add to cache and send
 function baseRouteHandler(file, sender, generator) {
-	if (fetchFromCache(file) == null) {
+	if (fetchFromCache(file) === null) {
 		console.log('Not in cache: ' + file);
 		generator(function (postData) {
 			addRenderedPostToCache(file, {body: postData});
@@ -516,10 +534,54 @@ function baseRouteHandler(file, sender, generator) {
 	}
 }
 
-function send404(response, file) {
-	console.log('404: ' + file);
-	response.status(404).send(generateHtmlForFile('posts/404.md'));
+// Generates a RSS feed.
+// The linkGenerator is what determines if the articles will link
+// to this site or to the target of a link post; it takes an article.
+// The completion function takes an object:
+// {
+//   date: // Date the generation happened
+//   rss: // Rendered RSS
+// }
+function generateRss(request, feedUrl, linkGenerator, completion) {
+	var feed = new Rss({
+		title: siteMetadata.SiteTitle,
+		description: 'Posts to ' + siteMetadata.SiteTitle,
+		feed_url: siteMetadata.SiteRoot + feedUrl,
+		site_url: siteMetadata.SiteRoot,
+		image_url: siteMetadata.SiteRoot + '/images/favicon.png',
+		author: 'Denton Jacobs',
+		copyright: '2012-' + new Date().getFullYear() + ' Denton Jacobs',
+		language: 'en',
+		pubDate: new Date().toString(),
+		ttl: '60'
+	});
+
+	var max = 10;
+	var i = 0;
+	allPostsSortedAndGrouped(function (postsByDay) {
+		postsByDay.forEach(function (day) {
+			day.articles.forEach(function (article) {
+				if (i < max) {
+					i += 1;
+					feed.item({
+						title: article.metadata.Title,
+						// Offset the time because Heroku's servers are GMT, whereas these dates are EST/EDT.
+						date: new Date(article.metadata.Date).addHours(utcOffset),
+						url: linkGenerator(article),
+						guid: externalFilenameForFile(article.file, request),
+						description: article.unwrappedBody.replace(/<script[\s\S]*?<\/script>/gm, "").concat(article.rssFooter)
+					});
+				}
+			});
+		});
+
+		completion({
+			date: new Date(),
+			rss: feed.xml()
+		});
+	});
 }
+
 
 /***************************************************
 * ROUTES                                          *
@@ -529,7 +591,7 @@ app.get('/', function (request, response) {
 	// Determine which page we're on, and make that the filename
 	// so we cache by paginated page.
 	var page = 1;
-	if (request.query.p != undefined) {
+	if (typeof(request.query.p) !== 'undefined') {
 		page = Number(request.query.p);
 		if (isNaN(page)) {
 			response.redirect('/');
@@ -538,7 +600,7 @@ app.get('/', function (request, response) {
 
 	// Do the standard route handler. Cough up a cached page if possible.
 	baseRouteHandler('/?p=' + page, function (cachedData) {
-		response.status(200).send(cachedData['body']);
+		response.status(200).send(cachedData.body);
 	}, function (completion) {
 		var indexInfo = generateHtmlAndMetadataForFile(postsRoot + 'index.md');
 		var footnoteIndex = 0;
@@ -557,13 +619,13 @@ app.get('/', function (request, response) {
 			// they would both be "fn1". Which doesn't work; they need to be unique.
 			var retVal = html.replace(footnoteAnchorRegex, '$&' + footnoteIndex);
 			retVal = retVal.replace(footnoteIdRegex, '$&' + footnoteIndex);
-			++footnoteIndex;
+			footnoteIndex += 1;
 
 			return retVal;
 		});
-		Handlebars.registerPartial('article', indexInfo['metadata']['ArticlePartial']);
-		var dayTemplate = Handlebars.compile(indexInfo['metadata']['DayTemplate']);
-		var footerTemplate = Handlebars.compile(indexInfo['metadata']['FooterTemplate']);
+		Handlebars.registerPartial('article', indexInfo.metadata.ArticlePartial);
+		var dayTemplate = Handlebars.compile(indexInfo.metadata.DayTemplate);
+		var footerTemplate = Handlebars.compile(indexInfo.metadata.FooterTemplate);
 
 		var bodyHtml = '';
 		allPostsPaginated(function (pages) {
@@ -571,7 +633,7 @@ app.get('/', function (request, response) {
 			if (page < 0 || page > pages.length) {
 				response.redirect(pages.length > 1 ? '/?p=' + pages.length : '/');
 			}
-			var days = pages[page - 1]['days'];
+			var days = pages[page - 1].days;
 			days.forEach(function (day) {
 				bodyHtml += dayTemplate(day);
 			});
@@ -579,19 +641,19 @@ app.get('/', function (request, response) {
 			// If we have more data to display, set up footer links.
 			var footerData = {};
 			if (page > 1) {
-				footerData['prevPage'] = page - 1;
+				footerData.prevPage = page - 1;
 			}
 			if (pages.length > page) {
-				footerData['nextPage'] = page + 1;
+				footerData.nextPage = page + 1;
 			}
 
-			var fileData = generateHtmlAndMetadataForFile(postsRoot + 'index.md')
+			var fileData = generateHtmlAndMetadataForFile(postsRoot + 'index.md');
 			var metadata = fileData.metadata;
 			var header = fileData.header;
 			// Replace <title>...</title> with one-off for homepage, because it doesn't show both Page & Site titles.
 			var titleBegin = header.indexOf('<title>') + "<title>".length;
 			var titleEnd = header.indexOf('</title>');
-			header = header.substring(0, titleBegin) + metadata['SiteTitle'] + header.substring(titleEnd);
+			header = header.substring(0, titleBegin) + metadata.SiteTitle + header.substring(titleEnd);
 			// Carry on with body
 			bodyHtml = performMetadataReplacements(metadata, bodyHtml);
 			var fullHtml = header + bodyHtml + footerTemplate(footerData) + footerSource;
@@ -601,61 +663,41 @@ app.get('/', function (request, response) {
 });
 
 app.get('/rss', function (request, response) {
+	if ('user-agent' in request.headers && request.headers['user-agent'].has('subscriber')) {
+		console.log('RSS: ' + request.headers['user-agent']);
+	}
 	response.type('application/rss+xml');
-	if (renderedRss['date'] == undefined || new Date().getTime() - renderedRss['date'].getTime() > 3600000) {
-		var feed = new rss({
-			title: siteMetadata['SiteTitle'],
-			description: 'Posts to ' + siteMetadata['SiteTitle'],
-            feed_url: 'http://www.dentonjacobs.com/rss',
-            site_url: 'http://www.dentonjacobs.com',
-            author: 'Denton Jacobs',
-            webMaster: 'Denton Jacobs',
-            copyright: '2012-' + new Date().getFullYear() + ' Your Name',
-            image_url: 'http://www.dentonjacobs.com/images/favicon.png',
-			language: 'en',
-			//categories: ['Category 1','Category 2','Category 3'],
-			pubDate: new Date().toString(),
-			ttl: '60'
-		});
 
-		// Gets the URL for this post; returns the link target if a link post,
-		// the post's URL if not a link post.
-		var getPostUrl = function(article) {
-			if (typeof(article['metadata']['Link']) !== 'undefined') {
-				return article['metadata']['Link'];
+	if (typeof(renderedRss.date) === 'undefined' || new Date().getTime() - renderedRss.date.getTime() > 3600000) {
+		generateRss(request, '/rss', function (article) {
+			if (typeof(article.metadata.Link) !== 'undefined') {
+				return article.metadata.Link;
 			}
-
-			return externalFilenameForFile(article['file'], request);
-		};
-
-		var max = 10;
-		var i = 0;
-		allPostsSortedAndGrouped(function (postsByDay) {
-			postsByDay.forEach(function (day) {
-				day['articles'].forEach(function (article) {
-					if (i < max) {
-						++i;
-						feed.item({
-							title: article['metadata']['Title'],
-							// Offset the time because Heroku's servers are GMT, whereas these dates are EST/EDT.
-							date: new Date(article['metadata']['Date']).addHours(utcOffset),
-							url: getPostUrl(article),
-							guid: externalFilenameForFile(article['file'], request),
-							description: article['unwrappedBody'].replace(/<script[\s\S]*?<\/script>/gm, "").concat(article['rssFooter'])
-						});
-					}
-				});
-			});
-
-			renderedRss = {
-				date: new Date(),
-				rss: feed.xml()
-			};
-
-			response.status(200).send(renderedRss['rss']);
+			return externalFilenameForFile(article.file, request);
+		}, function (rss) {
+			renderedRss = rss;
+			response.status(200).send(renderedRss.rss);
 		});
 	} else {
-		response.status(200).send(renderedRss['rss']);
+		response.status(200).send(renderedRss.rss);
+	}
+});
+
+app.get('/rss-alternate', function (request, response) {
+	if ('user-agent' in request.headers && request.headers['user-agent'].has('subscriber')) {
+		console.log('Alternate RSS: ' + request.headers['user-agent']);
+	}
+	response.type('application/rss+xml');
+
+	if (typeof(renderedAlternateRss.date) === 'undefined' || new Date().getTime() - renderedAlternateRss.date.getTime() > 3600000) {
+		generateRss(request, '/rss-alternate', function (article) {
+			return externalFilenameForFile(article.file, request);
+		}, function (rss) {
+			renderedAlternateRss = rss;
+			response.status(200).send(renderedAlternateRss.rss);
+		});
+	} else {
+		response.status(200).send(renderedAlternateRss.rss);
 	}
 });
 
@@ -668,13 +710,13 @@ app.get('/:year/:month', function (request, response) {
 		var html = '<div class="center"><h1>' + seekingDay.format('{Month} {yyyy}') + "</h1></div>";
 		var anyFound = false;
 		postsByDay.each(function (day) {
-			var thisDay = new Date(day['date']);
+			var thisDay = new Date(day.date);
 			if (thisDay.is(seekingDay.format('{Month} {yyyy}'))) {
 				anyFound = true;
 
-				html += "<h2>" + thisDay.format('{Weekday}, {Month} {d}') + "</h2><ul>";
+				html += "<h2>" + thisDay.format('{Month} {d}') + "</h2><ul>";
 				day.articles.each(function (article) {
-					html += '<li><a href="' + article.metadata.relativeLink + '">' + article.metadata.Title + '</a></li>';
+					html += '<li><a href="' + article.metadata.RelativeLink + '">' + article.metadata.Title + '</a></li>';
 				});
 				html += '</ul>';
 			}
@@ -697,12 +739,11 @@ app.get('/:year/:month/:day', function (request, response) {
 		var seekingDay = new Date(request.params.year, request.params.month - 1, request.params.day);
 
 		postsByDay.each(function (day) {
-			var thisDay = new Date(day['date']);
+			var thisDay = new Date(day.date);
 			if (thisDay.is(seekingDay)) {
-
 				var html = "<h1>Posts from " + seekingDay.format('{Weekday}, {Month} {d}, {yyyy}') + "</h1><ul>";
 				day.articles.each(function (article) {
-					html += '<li><a href="' + article.metadata.relativeLink + '">' + article.metadata.Title + '</a></li>';
+					html += '<li><a href="' + article.metadata.RelativeLink + '">' + article.metadata.Title + '</a></li>';
 				});
 
 				var header = headerSource.replace(
@@ -714,6 +755,7 @@ app.get('/:year/:month/:day', function (request, response) {
 	});
 });
 
+
 // Get a blog post, such as /2014/3/17/birthday
 app.get('/:year/:month/:day/:slug', function (request, response) {
 	var file = postsRoot + request.params.year + '/' + request.params.month + '/' + request.params.day + '/' + request.params.slug;
@@ -722,18 +764,19 @@ app.get('/:year/:month/:day/:slug', function (request, response) {
 });
 
 // Empties the cache.
-app.get('/tosscache', function (request, response) {
-    emptyCache();
-    response.sendStatus(205);
-});
+// app.get('/tosscache', function (request, response) {
+//     emptyCache();
+//     response.send(205);
+// });
 
 app.get('/count', function (request, response) {
 	console.log("/count");
 	allPostsSortedAndGrouped(function (all) {
 		var count = 0;
+		var day;
 		var days = 0;
-		for (var day in _.keys(all)) {
-			days++;
+		for (day in _.keys(all)) {
+			days += 1;
 			count += all[day].articles.length;
 		}
 
@@ -762,5 +805,5 @@ app.get('/:slug', function (request, response) {
 init();
 var port = Number(process.env.PORT || 5000);
 server.listen(port, function () {
-    console.log('Camel v' + version + ' server started on port %s', server.address().port);
+	console.log('Camel v' + version + ' server started on port %s', server.address().port);
 });
