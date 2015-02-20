@@ -122,7 +122,6 @@ function parseMetadata(lines) {
 	// Merge with site default metadata
 	Object.merge(retVal, siteMetadata, false, function(key, targetVal, sourceVal) {
 		// Ensure that the file wins over the defaults.
-		console.log('overwriting "' + sourceVal + '" with "' + targetVal);
 		return targetVal;
 	});
 
@@ -132,19 +131,11 @@ function parseMetadata(lines) {
 // Gets the external link for this file. Relative if request is
 // not specified. Absolute if request is specified.
 function externalFilenameForFile(file, request) {
-	console.log('file: ' + file);
-	console.log('postsRoot: ' + postsRoot);
-	console.log('postsRootReplaced: ' + postsRoot.replace('./', '').replace('/', ''));
 	var hostname = typeof(request) !== 'undefined' ? request.headers.host : '';
 
 	var retVal = hostname.length ? ('http://' + hostname) : '';
-	console.log("retVal: " + retVal);
-	//retVal += file.at(0) === '/' && hostname.length > 0 ? '' : '/';
-	//retVal += file.at(0) === '\\' && hostname.length > 0 ? '' : '\\';
-	//console.log("retVal: " + retVal);
-	//retVal += file.replace('.md', '').replace(postsRoot, '').replace(postsRoot.replace('./', ''), '');
+	retVal += file.at(0) === '/' && hostname.length > 0 ? '' : '/';
 	retVal += file.replace('.md', '').replace(postsRoot, '').replace(postsRoot.replace('./', '').replace('/', ''), '');
-	console.log("retVal: " + retVal);
 	return retVal;
 }
 
@@ -298,14 +289,25 @@ function tweetLatestPost() {
 				if (lastUrl !== link) {
 					console.log('Tweeting new link: ' + link);
 
-					var params = {
-						status: latestPost.metadata.Title + '\n\n' + link
-					};
-					twitterClient.post('statuses/update', params, function (error, tweet, response) {
-							if (error) {
-								console.log(JSON.stringify(error, undefined, 2));
-								throw error;
-							}
+					// Figure out how many characters we have to play with.
+					twitterClient.get('help/configuration', null, function (error, configuration) {
+						var suffix = " \n\n";
+						var maxSize = 140 - configuration.short_url_length_https - suffix.length;
+
+						// Shorten the title if need be.
+						var title = latestPost.metadata.Title;
+						if (title.length > maxSize) {
+							title = title.substring(0, maxSize - 3) + '...';
+						}
+
+						var params = {
+							status: title + suffix + link
+						};
+						twitterClient.post('statuses/update', params, function (error, tweet, response) {
+								if (error) {
+									console.log(JSON.stringify(error, undefined, 2));
+								}
+						});
 					});
 				} else {
 					console.log('Twitter is up to date.');
@@ -510,7 +512,8 @@ function sendYearListing(request, response) {
 			retVal += "<i>No posts found.</i>";
 		}
 
-		var header = headerSource.replace(metadataMarker + 'Title' + metadataMarker, 'Posts for ' + year);
+		var updatedSource = performMetadataReplacements(siteMetadata, headerSource);
+		var header = updatedSource.replace(metadataMarker + 'Title' + metadataMarker, 'Posts for ' + year);
 		response.status(200).send(header + retVal + footerSource);
 	});
 
@@ -725,7 +728,7 @@ app.get('/:year/:month', function (request, response) {
 		if (!anyFound) {
 			html += "<i>No posts found.</i>";
 		}
-		var header = headerSource.replace(
+		var header = performMetadataReplacements(siteMetadata, headerSource).replace(
 			metadataMarker + 'Title' + metadataMarker,
 			seekingDay.format('{Month} {yyyy}') + '&mdash;' + siteMetadata.SiteTitle);
 		response.status(200).send(header + html + footerSource);
@@ -746,7 +749,7 @@ app.get('/:year/:month/:day', function (request, response) {
 					html += '<li><a href="' + article.metadata.RelativeLink + '">' + article.metadata.Title + '</a></li>';
 				});
 
-				var header = headerSource.replace(
+				var header = performMetadataReplacements(siteMetadata, headerSource).replace(
 					metadataMarker + 'Title' + metadataMarker,
 					seekingDay.format('{Weekday}, {Month} {d}, {Year}'));
 				response.status(200).send(header + html + footerSource);
