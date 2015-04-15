@@ -258,60 +258,60 @@ function allPostsSortedAndGrouped(completion) {
 	}
 }
 
-function tweetLatestPost() {
-	if (twitterClient !== null && typeof(process.env.TWITTER_CONSUMER_KEY) !== 'undefined') {
-		twitterClient.get('statuses/user_timeline', {screen_name: twitterUsername}, function (error, tweets) {
-			if (error) {
-				console.log(JSON.stringify(error, undefined, 2));
-				return;
-			}
+// function tweetLatestPost() {
+// 	if (twitterClient !== null && typeof(process.env.TWITTER_CONSUMER_KEY) !== 'undefined') {
+// 		twitterClient.get('statuses/user_timeline', {screen_name: twitterUsername}, function (error, tweets) {
+// 			if (error) {
+// 				console.log(JSON.stringify(error, undefined, 2));
+// 				return;
+// 			}
 
-			var lastUrl = null, i = 0;
-			while (lastUrl === null && i < tweets.length) {
-				if (tweets[i].source.has(twitterClientNeedle) &&
-					tweets[i].entities &&
-					tweets[i].entities.urls
-					tweets[i].entities.urls.length > 0) {
-					lastUrl = tweets[i].entities.urls[0].expanded_url;
-				} else {
-					i += 1;
-				}
-			}
+// 			var lastUrl = null, i = 0;
+// 			while (lastUrl === null && i < tweets.length) {
+// 				if (tweets[i].source.has(twitterClientNeedle) &&
+// 					tweets[i].entities &&
+// 					tweets[i].entities.urls
+// 					tweets[i].entities.urls.length > 0) {
+// 					lastUrl = tweets[i].entities.urls[0].expanded_url;
+// 				} else {
+// 					i += 1;
+// 				}
+// 			}
 
-			allPostsSortedAndGrouped(function (postsByDay) {
-				var latestPost = postsByDay[0].articles[0];
-				var link = latestPost.metadata.SiteRoot + latestPost.metadata.RelativeLink;
+// 			allPostsSortedAndGrouped(function (postsByDay) {
+// 				var latestPost = postsByDay[0].articles[0];
+// 				var link = latestPost.metadata.SiteRoot + latestPost.metadata.RelativeLink;
 
-				if (lastUrl !== link) {
-					console.log('Tweeting new link: ' + link);
+// 				if (lastUrl !== link) {
+// 					console.log('Tweeting new link: ' + link);
 
-					// Figure out how many characters we have to play with.
-					twitterClient.get('help/configuration', function (error, configuration, response) {
-						var suffix = " \n\n";
-						var maxSize = 140 - configuration.short_url_length_https - suffix.length;
+// 					// Figure out how many characters we have to play with.
+// 					twitterClient.get('help/configuration', function (error, configuration, response) {
+// 						var suffix = " \n\n";
+// 						var maxSize = 140 - configuration.short_url_length_https - suffix.length;
 
-						// Shorten the title if need be.
-						var title = latestPost.metadata.Title;
-						if (title.length > maxSize) {
-							title = title.substring(0, maxSize - 3) + '...';
-						}
+// 						// Shorten the title if need be.
+// 						var title = latestPost.metadata.Title;
+// 						if (title.length > maxSize) {
+// 							title = title.substring(0, maxSize - 3) + '...';
+// 						}
 
-						var params = {
-							status: title + suffix + link
-						};
-						twitterClient.post('statuses/update', params, function (error, tweet, response) {
-								if (error) {
-									console.log(JSON.stringify(error, undefined, 2));
-								}
-						});
-					});
-				} else {
-					console.log('Twitter is up to date.');
-				}
-			});
-		});
-	}
-}
+// 						var params = {
+// 							status: title + suffix + link
+// 						};
+// 						twitterClient.post('statuses/update', params, function (error, tweet, response) {
+// 								if (error) {
+// 									console.log(JSON.stringify(error, undefined, 2));
+// 								}
+// 						});
+// 					});
+// 				} else {
+// 					console.log('Twitter is up to date.');
+// 				}
+// 			});
+// 		});
+// 	}
+// }
 
 function loadHeaderFooter(file, completion) {
 	fs.exists(templateRoot + file, function(exists) {
@@ -332,7 +332,7 @@ function emptyCache() {
 	renderedRss = {};
 	allPostsSortedGrouped = {};
 
-	tweetLatestPost();
+	//tweetLatestPost();
 }
 
 function init() {
